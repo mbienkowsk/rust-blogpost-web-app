@@ -1,0 +1,15 @@
+[package]
+name = "web-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.7.7", features = ["multipart"] }
+chrono = { version = "0.4.38", features = ["serde"] }
+
+serde = { version = "1.0.213", features = ["derive"] }
+serde_json = "1.0.132"
+
+rusqlite = { version = "0.32.0", features = ["bundled", "chrono"] }
+tokio = { version = "1.41.0", features = ["full"] }
+askama = "0.12.1"

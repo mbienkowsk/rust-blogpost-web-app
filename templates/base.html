@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog</title>
+</head>
+<body>
+    <h1>Blog Post Form</h1>
+    <form action="/home" method="post" enctype="multipart/form-data">
+        <label>Author Username:</label>
+        <input type="text" name="author_username" required>
+        <label>Blog Content:</label>
+        <textarea name="text" required></textarea>
+        <label>Avatar URL:</label>
+        <input type="url" name="avatar_url">
+        <label>Post image:</label>
+        <input type="file" name="image" accept="image/png">
+        <button type="submit">Submit</button>
+    </form>
+
+    <h2>Feed</h2>
+    {% for post in posts %}
+        <div>
+            <h3>{{ post.author_username }}</h3>
+            <p>{{ post.text }}</p>
+        </div>
+    {% endfor %}
+</body>
+</html>
