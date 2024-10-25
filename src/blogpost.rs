@@ -1,4 +1,3 @@
-use crate::FormData;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 
@@ -12,14 +11,18 @@ pub struct Blogpost {
 }
 
 impl Blogpost {
-    pub fn from_form_data(form_data: FormData) -> Blogpost {
-        // Todo: download avatar image
-        Blogpost {
-            text: form_data.text,
-            author_username: form_data.author_username,
+    pub fn new(
+        text: String,
+        author_username: String,
+        image_base64: Option<String>,
+        avatar_base64: Option<String>,
+    ) -> Self {
+        Self {
+            text,
+            author_username,
             published: chrono::Local::now().naive_local(),
-            avatar_base64: None,
-            image_base64: None,
+            image_base64,
+            avatar_base64,
         }
     }
 }
