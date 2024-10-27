@@ -25,4 +25,14 @@ impl Blogpost {
             avatar_base64,
         }
     }
+
+    pub fn from_sqlite_row(row: &rusqlite::Row) -> Self {
+        Self {
+            text: row.get(0).unwrap(),
+            published: row.get(1).unwrap(),
+            image_base64: row.get(2).unwrap(),
+            author_username: row.get(3).unwrap(),
+            avatar_base64: row.get(4).unwrap(),
+        }
+    }
 }
