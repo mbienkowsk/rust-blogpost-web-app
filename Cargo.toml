@@ -13,3 +13,8 @@ serde_json = "1.0.132"
 rusqlite = { version = "0.32.0", features = ["bundled", "chrono"] }
 tokio = { version = "1.41.0", features = ["full"] }
 askama = "0.12.1"
+url = "2.5.2"
+reqwest = "0.12.8"
+base64 = "0.22.1"
+log = "0.4.22"
+env_logger = "0.11.5"
