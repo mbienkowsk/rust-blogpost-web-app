@@ -1,8 +1,13 @@
 use crate::blogpost::Blogpost;
-use rusqlite::{params, Connection, Result, ToSql};
+use rusqlite::{params, Connection, Result};
 
-pub fn create_db() -> Result<Connection> {
+pub fn create_db_connection() -> Result<Connection> {
     let conn = Connection::open("blog.db")?;
+    Ok(conn)
+}
+
+pub fn create_db_schema() -> Result<()> {
+    let conn = create_db_connection()?;
     conn.execute(
         "
         CREATE TABLE IF NOT EXISTS blogposts (
@@ -17,27 +22,28 @@ pub fn create_db() -> Result<Connection> {
         [],
     )?;
 
-    Ok(conn)
+    Ok(())
 }
 
-pub fn insert_blogpost(conn: &Connection, blogpost: Blogpost) -> Result<()> {
-    conn.execute(
+pub fn insert_blogpost(blogpost: Blogpost) -> Result<()> {
+    create_db_connection()?.execute(
         "
         INSERT INTO blogposts (text, publication_date, image, username, avatar)
         VALUES (?1, ?2, ?3, ?4, ?5);
         ",
-        [
-            &blogpost.text,
-            &blogpost.published as &dyn ToSql,
-            &blogpost.image_base64 as &dyn ToSql,
-            &blogpost.author_username,
-            &blogpost.avatar_base64 as &dyn ToSql,
+        params![
+            blogpost.text,
+            blogpost.published,
+            blogpost.image_base64,
+            blogpost.author_username,
+            blogpost.avatar_base64,
         ],
     )?;
     Ok(())
 }
 
-pub fn get_all_blogposts(conn: &Connection) -> Result<Vec<Blogpost>> {
+pub fn get_all_blogposts() -> Result<Vec<Blogpost>> {
+    let conn = create_db_connection()?;
     let mut stmt = conn.prepare(
         "
         SELECT text, publication_date, image, username, avatar
@@ -45,15 +51,11 @@ pub fn get_all_blogposts(conn: &Connection) -> Result<Vec<Blogpost>> {
         ",
     )?;
     let blogposts = stmt
-        .query_map([], |row| {
-            Ok(Blogpost {
-                text: row.get(0)?,
-                published: row.get(1)?,
-                image_base64: row.get(2)?,
-                author_username: row.get(3)?,
-                avatar_base64: row.get(4)?,
-            })
-        })?
-        .collect::<Result<Vec<Blogpost>>>()?;
+        .query_map([], |row| Ok(Blogpost::from_sqlite_row(row)))?
+        .collect::<Result<Vec<Blogpost>>>()?
+        .into_iter()
+        .rev()
+        .collect();
+
     Ok(blogposts)
 }
