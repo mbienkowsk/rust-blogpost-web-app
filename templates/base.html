@@ -1,30 +1,78 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.tailwindcss.com"></script>
     <title>Blog</title>
-</head>
-<body>
-    <h1>Blog Post Form</h1>
-    <form action="/home" method="post" enctype="multipart/form-data">
-        <label>Author Username:</label>
-        <input type="text" name="author_username" required>
-        <label>Blog Content:</label>
-        <textarea name="text" required></textarea>
-        <label>Avatar URL:</label>
-        <input type="url" name="avatar_url">
-        <label>Post image:</label>
-        <input type="file" name="image" accept="image/png">
-        <button type="submit">Submit</button>
-    </form>
-
-    <h2>Feed</h2>
-    {% for post in posts %}
-        <div>
-            <h3>{{ post.author_username }}</h3>
-            <p>{{ post.text }}</p>
+  </head>
+  <body class="bg-gray-800 text-white">
+    <h1 class="font-bold text-3xl mt-12 ml-20">Blogposts</h1>
+    <div class="flex flex-col items-center">
+      <h2 class="font-bold text-2xl my-3">Create</h2>
+      <form
+        action="/home"
+        method="post"
+        enctype="multipart/form-data"
+        class="grid"
+      >
+        <label>Author username:</label>
+        <input
+          type="text"
+          name="author_username"
+          required
+          class="text-black p-2 my-1 focus:bg-white hover:bg-gray-300"
+        />
+        <label>Post content:</label>
+        <textarea
+          name="text"
+          required
+          class="text-black p-2 my-1 focus:bg-white hover:bg-gray-300"
+        ></textarea>
+        <label>Avatar URL (Optional):</label>
+        <input
+          type="url"
+          name="avatar_url"
+          class="text-black p-2 my-1 focus:bg-white hover:bg-gray-300"
+        />
+        <label>Post image (Optional):</label>
+        <input type="file" name="image" accept="image/png" class="my-1" />
+        <div class="flex justify-center">
+          <button
+            type="submit"
+            class="bg-white hover:bg-gray-300 text-black my-2 w-1/2 py-1 rounded"
+          >
+            Submit
+          </button>
         </div>
-    {% endfor %}
-</body>
+      </form>
+
+      <h2 class="font-bold text-2xl mt-12 mb-6">Feed</h2>
+      {% for post in posts %}
+      <div class="bg-black rounded mb-4 p-4 w-3/5">
+        <div class="flex flex-row mb-2">
+          {% if let Some(base64_img) = post.avatar_base64 %}
+          <img
+            src="data:image/png;base64,{{ base64_img }}"
+            alt="{{ post.author_username }}'s avatar"
+            style="width: 50px; height: 50px"
+          />
+          {% endif %}
+          <h3 class="text-green-500">{{ post.author_username }}</h3>
+        </div>
+
+        <div class="flex flex-row justify-between">
+          <p class="w-1/2">{{ post.text }}</p>
+          {% if let Some(base64_img) = post.image_base64 %}
+          <img
+            src="data:image/png;base64,{{ base64_img }}"
+            alt="{{ post.author_username }}'s image"
+            class="w-1/2 mx-5"
+          />
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </body>
 </html>
