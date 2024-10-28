@@ -58,11 +58,13 @@
             style="width: 50px; height: 50px"
           />
           {% endif %}
-          <h3 class="text-green-500">{{ post.author_username }}</h3>
+          <h3 class="text-green-500 overflow-scroll">
+            {{ post.author_username }}
+          </h3>
         </div>
 
         <div class="flex flex-row justify-between">
-          <p class="w-1/2">{{ post.text }}</p>
+          <p class="w-1/2 overflow-scroll">{{ post.text }}</p>
           {% if let Some(base64_img) = post.image_base64 %}
           <img
             src="data:image/png;base64,{{ base64_img }}"
