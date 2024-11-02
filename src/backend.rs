@@ -1,6 +1,3 @@
-use std::io::Cursor;
-use std::time::Duration;
-
 use crate::blogpost::Blogpost;
 use crate::db;
 use askama::Template;
@@ -8,6 +5,8 @@ use axum::response::Html;
 use axum::{body::Bytes, extract::Multipart};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use image::ImageFormat;
+use std::io::Cursor;
+use std::time::Duration;
 use url::Url;
 
 #[derive(Template)]
@@ -21,8 +20,11 @@ pub fn get_populated_template_value() -> String {
     BlogTemplate { posts }.render().unwrap()
 }
 
-pub async fn fallback(uri: axum::http::Uri) -> Html<String> {
-    format!("No route {}", uri).into()
+pub async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        format!("No route {}", uri),
+    )
 }
 
 pub async fn get_home() -> Html<String> {
