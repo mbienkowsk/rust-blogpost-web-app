@@ -62,6 +62,7 @@ async fn download_avatar(url: Url) -> Result<Option<String>, String> {
     let client = reqwest::ClientBuilder::new()
         .timeout(Duration::from_secs(5))
         .build()
+        //TODO: status codes??
         .map_err(|e| e.to_string())?;
 
     let request = client
@@ -71,11 +72,11 @@ async fn download_avatar(url: Url) -> Result<Option<String>, String> {
         .map_err(|e| e.to_string())?;
 
     let response = client.execute(request).await.unwrap();
-    validate_png_header(response.headers())?;
 
     if !response.status().is_success() {
         Err("Failed to download avatar".to_string())
     } else {
+        validate_png_header(response.headers())?;
         let bytes = response.bytes().await.unwrap();
         validate_bytes_as_png(&bytes)?;
         let rv = BASE64_STANDARD.encode(bytes);
@@ -152,4 +153,187 @@ async fn parse_multipart(mut multipart: Multipart) -> MultipartData {
     }
 
     data
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Bytes;
+
+    #[test]
+    fn test_validate_png_header_no_content_type() {
+        let headers = axum::http::HeaderMap::new();
+        let result = super::validate_png_header(&headers);
+        assert_eq!(result, Err(String::from("No content type header found")));
+    }
+
+    #[test]
+    fn test_validate_png_header_invalid_content_type() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("Content-Type", "image/jpeg".parse().unwrap());
+        let result = super::validate_png_header(&headers);
+        assert_eq!(
+            result,
+            Err(String::from(
+                "Invalid content type. Make sure the URL points to a PNG image."
+            ))
+        );
+    }
+
+    #[test]
+    fn test_validate_png_header_png_content_type() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("Content-Type", "image/png".parse().unwrap());
+        let result = super::validate_png_header(&headers);
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn validate_bytes_as_png_invalid_data() {
+        let bytes = axum::body::Bytes::from("not a png".as_bytes());
+        let result = super::validate_bytes_as_png(&bytes);
+        assert_eq!(
+            result,
+            Err(String::from(
+                "Could not determine image format! Make sure the url points to a png image."
+            ))
+        );
+    }
+
+    // These are used to test png Byte validation
+    // Smallest possible valid PNG image
+    const MINIMAL_PNG_DATA: [u8; 45] = [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG Signature
+        0x00, 0x00, 0x00, 0x0D, // IHDR Length
+        0x49, 0x48, 0x44, 0x52, // IHDR Chunk Type
+        0x00, 0x00, 0x00, 0x01, // Width: 1 pixel
+        0x00, 0x00, 0x00, 0x01, // Height: 1 pixel
+        0x08, // Bit depth: 8
+        0x02, // Color type: Truecolor
+        0x00, // Compression method: default
+        0x00, // Filter method: default
+        0x00, // Interlace method: no interlace
+        0x90, 0x77, 0x53, 0xDE, // CRC for IHDR
+        0x00, 0x00, 0x00, 0x00, // IEND Length
+        0x49, 0x45, 0x4E, 0x44, // IEND Chunk Type
+        0xAE, 0x42, 0x60, 0x82, // CRC for IEND
+    ];
+
+    // Smallest possible valid WebP image
+    const MINIMAL_WEBP_DATA: [u8; 12] = [
+        0x52, 0x49, 0x46, 0x46, 0x0A, 0x00, 0x00, 0x00, // RIFF Header
+        0x57, 0x45, 0x42, 0x50, // "WEBP" Signature
+    ];
+
+    #[test]
+    fn test_validate_bytes_as_png_correct() {
+        let png_as_bytes = Bytes::from_static(&MINIMAL_PNG_DATA);
+        let result = super::validate_bytes_as_png(&png_as_bytes);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_bytes_as_png_webp_image() {
+        let webp_as_bytes = Bytes::from_static(&MINIMAL_WEBP_DATA);
+        let result = super::validate_bytes_as_png(&webp_as_bytes);
+        assert_eq!(
+            result,
+            Err(String::from("Invalid image format! Accepting only PNG"))
+        );
+    }
+
+    #[test]
+    fn test_validate_bytes_as_png_invalid_data() {
+        let invalid_data = Bytes::from("not a png".as_bytes());
+        let result = super::validate_bytes_as_png(&invalid_data);
+        assert_eq!(
+            result,
+            Err(String::from(
+                "Could not determine image format! Make sure the url points to a png image."
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_avatar_success() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("Content-Type", "image/png")
+            .with_body(Bytes::from_static(&MINIMAL_PNG_DATA))
+            .create_async()
+            .await;
+
+        let server_url = url::Url::parse(&server.url()).unwrap();
+        let result = download_avatar(server_url);
+        assert!(result.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_download_avatar_invalid_response_headers() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/wrong-content-type")
+            .with_status(200)
+            .with_header("Content-Type", "image/jpeg")
+            .create_async()
+            .await;
+
+        server
+            .mock("GET", "/no-content-type")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let server_url_wrong =
+            url::Url::parse(&format!("{}/wrong-content-type", server.url())).unwrap();
+        let server_url_none =
+            url::Url::parse(&format!("{}/no-content-type", server.url())).unwrap();
+
+        let result_wrong = download_avatar(server_url_wrong).await;
+        let result_none = download_avatar(server_url_none).await;
+
+        assert_eq!(
+            result_wrong,
+            Err("Invalid content type. Make sure the URL points to a PNG image.".to_string())
+        );
+        assert_eq!(result_none, Err("No content type header found".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_download_avatar_dead_url() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let server_url = url::Url::parse(&server.url()).unwrap();
+        let result = download_avatar(server_url).await;
+        assert_eq!(result, Err("Failed to download avatar".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_download_avatar_invalid_payload() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("Content-Type", "image/png")
+            .with_body(Bytes::from("not an image"))
+            .create_async()
+            .await;
+
+        let server_url = url::Url::parse(&server.url()).unwrap();
+        let result = download_avatar(server_url).await;
+        assert_eq!(
+            result,
+            Err(
+                "Could not determine image format! Make sure the url points to a png image."
+                    .to_string()
+            )
+        );
+    }
 }
