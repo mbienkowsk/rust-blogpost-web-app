@@ -1,9 +1,16 @@
+use std::io::Cursor;
+use std::string;
+use std::time::Duration;
+
 use crate::blogpost::Blogpost;
 use crate::db;
 use askama::Template;
-use axum::extract::Multipart;
+use axum::extract::FromRef;
 use axum::response::Html;
+use axum::{body::Bytes, extract::Multipart};
 use base64::{prelude::BASE64_STANDARD, Engine};
+use image::{ImageDecoder, ImageFormat};
+use serde::{de::Error, ser::Error};
 use url::Url;
 
 #[derive(Template)]
@@ -52,14 +59,41 @@ pub async fn handle_form_submit(multipart: axum::extract::Multipart) -> Html<Str
 }
 
 async fn download_avatar(url: Url) -> Result<Option<String>, String> {
-    let response = reqwest::get(url).await.unwrap();
+    let client = reqwest::ClientBuilder::new()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let request = client
+        .get(url)
+        .header("Accept", "image/png")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client.execute(request).await.unwrap();
+
     if !response.status().is_success() {
         Err("Failed to download avatar".to_string())
     } else {
-        // TODO: verify file type?
         let bytes = response.bytes().await.unwrap();
+        verify_png(&bytes)?;
         let rv = BASE64_STANDARD.encode(bytes);
         Ok(Some(rv))
+    }
+}
+
+// Verify that the bytes downloaded from a given URL are a valid PNG image
+fn verify_png(image_bytes: &Bytes) -> Result<(), String> {
+    match image::ImageReader::new(Cursor::new(image_bytes))
+        .with_guessed_format()
+        .map_err(|_| String::from("Error while parsing the image. Try again."))?
+        .format()
+    {
+        Some(ImageFormat::Png) => Ok(()),
+        Some(_) => Err(String::from("Invalid image format! Accepting only PNG")),
+        None => Err(String::from(
+            "Could not determine image format! Make sure the url points to a png image.",
+        )),
     }
 }
 
