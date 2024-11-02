@@ -56,6 +56,7 @@ async fn download_avatar(url: Url) -> Result<Option<String>, String> {
     if !response.status().is_success() {
         Err("Failed to download avatar".to_string())
     } else {
+        // TODO: verify file type?
         let bytes = response.bytes().await.unwrap();
         let rv = BASE64_STANDARD.encode(bytes);
         Ok(Some(rv))
