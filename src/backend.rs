@@ -1,16 +1,13 @@
 use std::io::Cursor;
-use std::string;
 use std::time::Duration;
 
 use crate::blogpost::Blogpost;
 use crate::db;
 use askama::Template;
-use axum::extract::FromRef;
 use axum::response::Html;
 use axum::{body::Bytes, extract::Multipart};
 use base64::{prelude::BASE64_STANDARD, Engine};
-use image::{ImageDecoder, ImageFormat};
-use serde::{de::Error, ser::Error};
+use image::ImageFormat;
 use url::Url;
 
 #[derive(Template)]
@@ -58,6 +55,7 @@ pub async fn handle_form_submit(multipart: axum::extract::Multipart) -> Html<Str
     get_populated_template_value().into()
 }
 
+// Download a png avatar from the given URL and return it as a base64 encoded string
 async fn download_avatar(url: Url) -> Result<Option<String>, String> {
     let client = reqwest::ClientBuilder::new()
         .timeout(Duration::from_secs(5))
@@ -71,21 +69,23 @@ async fn download_avatar(url: Url) -> Result<Option<String>, String> {
         .map_err(|e| e.to_string())?;
 
     let response = client.execute(request).await.unwrap();
+    validate_png_header(response.headers())?;
 
     if !response.status().is_success() {
         Err("Failed to download avatar".to_string())
     } else {
         let bytes = response.bytes().await.unwrap();
-        verify_png(&bytes)?;
+        validate_bytes_as_png(&bytes)?;
         let rv = BASE64_STANDARD.encode(bytes);
         Ok(Some(rv))
     }
 }
 
 // Verify that the bytes downloaded from a given URL are a valid PNG image
-fn verify_png(image_bytes: &Bytes) -> Result<(), String> {
+fn validate_bytes_as_png(image_bytes: &Bytes) -> Result<(), String> {
     match image::ImageReader::new(Cursor::new(image_bytes))
         .with_guessed_format()
+        // Only cursor IO errors here
         .map_err(|_| String::from("Error while parsing the image. Try again."))?
         .format()
     {
@@ -95,6 +95,21 @@ fn verify_png(image_bytes: &Bytes) -> Result<(), String> {
             "Could not determine image format! Make sure the url points to a png image.",
         )),
     }
+}
+
+fn validate_png_header(headers: &axum::http::HeaderMap) -> Result<(), String> {
+    let content_type = headers
+        .get("Content-Type")
+        .ok_or("No content type header found")?
+        .to_str()
+        .map_err(|e| e.to_string())?;
+
+    if content_type != "image/png" {
+        return Err(String::from(
+            "Invalid content type. Make sure the URL points to a PNG image.",
+        ));
+    }
+    Ok(())
 }
 
 struct MultipartData {
