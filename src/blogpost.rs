@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct Blogpost {
     pub text: String,
     pub author_username: String,
@@ -34,5 +34,28 @@ impl Blogpost {
             author_username: row.get(3).unwrap(),
             avatar_base64: row.get(4).unwrap(),
         }
+    }
+}
+
+impl std::fmt::Debug for Blogpost {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Blogpost")
+            .field("author_username", &self.author_username)
+            .field("text", &self.text)
+            .field(
+                "image_base64",
+                &self
+                    .image_base64
+                    .as_ref()
+                    .map(|s| format!("{}...", &s[..20])),
+            )
+            .field(
+                "avatar_base64",
+                &self
+                    .avatar_base64
+                    .as_ref()
+                    .map(|s| format!("{}...", &s[..20])),
+            )
+            .finish()
     }
 }

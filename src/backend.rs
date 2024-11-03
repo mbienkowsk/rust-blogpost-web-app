@@ -5,10 +5,12 @@ use crate::error::{
     invalid_image_format_error, AppError,
 };
 use askama::Template;
+use axum::extract::multipart::Field;
 use axum::response::Html;
 use axum::{body::Bytes, extract::Multipart};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use image::ImageFormat;
+use log::{error, info, warn};
 use std::io::Cursor;
 use std::time::Duration;
 use url::Url;
@@ -27,11 +29,16 @@ pub async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) 
 }
 
 pub async fn get_home() -> Result<Html<String>, AppError> {
+    info!("Fetching all blog posts for the home page");
     match db::get_all_blogposts() {
-        Ok(posts) => BlogTemplate { posts }
-            .render()
-            .map(Html)
-            .map_err(|_| internal_server_error()),
+        Ok(posts) => {
+            info!("Rendering the home page with {} blog posts", posts.len());
+
+            BlogTemplate { posts }.render().map(Html).map_err(|e| {
+                error!("Failed to render the template: {:?}", e);
+                internal_server_error()
+            })
+        }
         Err(_) => Err(internal_server_error()),
     }
 }
@@ -39,24 +46,39 @@ pub async fn get_home() -> Result<Html<String>, AppError> {
 pub async fn handle_form_submit(
     multipart: axum::extract::Multipart,
 ) -> Result<Html<String>, AppError> {
+    info!("Handling form submission");
+
     let multipart_data = match parse_multipart(multipart).await {
-        Ok(data) => data,
-        Err(e) => return Err(e),
+        Ok(data) => {
+            info!("Parsed multipart form data: {:?}", data);
+            data
+        }
+        Err(e) => {
+            error!("Failed to parse multipart form data: {:?}", e);
+            return Err(e);
+        }
     };
 
     let new_post = match create_blogpost(multipart_data).await {
         Ok(post) => post,
-        Err(e) => return Err(e),
+        Err(e) => {
+            error!("Failed to create blogpost: {:?}", e);
+            return Err(e);
+        }
     };
 
     if db::insert_blogpost(new_post).is_err() {
+        error!("Failed to insert blogpost into database");
         return Err(internal_server_error());
     }
 
+    info!("New blogpost successfully inserted into database");
     get_home().await
 }
 
 async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, AppError> {
+    info!("Creating a new blogpost");
+
     let mut new_post = Blogpost::new(
         multipart_data.text,
         multipart_data.author_username,
@@ -66,47 +88,66 @@ async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, AppE
 
     if let Some(url) = multipart_data.avatar_url {
         let parsed_url = Url::parse(&url).map_err(|_| invalid_avatar_url_error())?;
+        info!("Avatar URL parsed successfully: {}", parsed_url);
 
         match download_avatar(parsed_url).await {
-            Ok(avatar_base64) => new_post.avatar_base64 = avatar_base64,
-            Err(e) => return Err(e),
+            Ok(avatar_base64) => {
+                info!("Avatar downloaded and encoded successfully");
+                new_post.avatar_base64 = avatar_base64;
+            }
+            Err(e) => {
+                error!("Failed to download avatar: {:?}", e);
+                return Err(e);
+            }
         }
     }
 
+    info!("New blogpost created: {:?}", new_post);
     Ok(new_post)
 }
 
 // Download a png avatar from the given URL and return it as a base64 encoded string
 async fn download_avatar(url: Url) -> Result<Option<String>, AppError> {
+    info!("Downloading avatar from URL: {}", url);
     let client = reqwest::ClientBuilder::new()
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|_| internal_server_error())?;
+        .map_err(|e| {
+            error!("Failed to build HTTP client: {:?}", e);
+            internal_server_error()
+        })?;
 
     let request = client
-        .get(url)
+        .get(url.clone())
         .header("Accept", "image/png")
         .build()
-        .map_err(|_| internal_server_error())?;
+        .map_err(|e| {
+            error!("Failed to build request for URL {}: {:?}", url, e);
+            internal_server_error()
+        })?;
 
-    let response = client
-        .execute(request)
-        .await
-        .map_err(|_| avatar_download_error())?;
+    let response = client.execute(request).await.map_err(|e| {
+        error!("Request execution failed for URL {}: {:?}", url, e);
+        avatar_download_error()
+    })?;
 
     handle_avatar_response(response).await
 }
 
 async fn handle_avatar_response(response: reqwest::Response) -> Result<Option<String>, AppError> {
     if !response.status().is_success() {
+        error!(
+            "Received non-success response for avatar download: {}",
+            response.status()
+        );
         return Err(avatar_download_error());
     }
 
-    validate_png_header(response.headers())?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|_| avatar_download_error())?;
+    validate_png_header(&response)?;
+    let bytes = response.bytes().await.map_err(|e| {
+        error!("Failed to read response bytes for avatar: {:?}", e);
+        avatar_download_error()
+    })?;
     validate_bytes_as_png(&bytes)?;
     let rv = BASE64_STANDARD.encode(bytes);
     Ok(Some(rv))
@@ -114,26 +155,44 @@ async fn handle_avatar_response(response: reqwest::Response) -> Result<Option<St
 
 // Verify that the bytes downloaded from a given URL are a valid PNG image
 fn validate_bytes_as_png(image_bytes: &Bytes) -> Result<(), AppError> {
+    info!("Validating PNG image format");
     match image::ImageReader::new(Cursor::new(image_bytes))
         .with_guessed_format()
-        // Only cursor IO errors here
-        .map_err(|_| internal_server_error())?
+        .map_err(|e| {
+            error!("Failed to guess image format: {:?}", e);
+            internal_server_error()
+        })?
         .format()
     {
         Some(ImageFormat::Png) => Ok(()),
-        Some(_) => Err(invalid_image_format_error()),
-        None => Err(invalid_image_format_error()),
+        Some(_) => {
+            warn!("Invalid image format detected (not PNG)");
+            Err(invalid_image_format_error())
+        }
+        None => {
+            warn!("No image format detected");
+            Err(invalid_image_format_error())
+        }
     }
 }
 
-fn validate_png_header(headers: &axum::http::HeaderMap) -> Result<(), AppError> {
-    let content_type = headers
+// Verify that the Content-Type header of the a response is image/png
+fn validate_png_header(response: &reqwest::Response) -> Result<(), AppError> {
+    let content_type = response
+        .headers()
         .get("Content-Type")
-        .ok_or(invalid_image_format_error())?
+        .ok_or_else(|| {
+            warn!("Content-Type header missing in response");
+            invalid_image_format_error()
+        })?
         .to_str()
-        .map_err(|_| internal_server_error())?;
+        .map_err(|e| {
+            error!("Failed to parse Content-Type header: {:?}", e);
+            internal_server_error()
+        })?;
 
     if content_type != "image/png" {
+        warn!("Invalid Content-Type (not image/png): {}", content_type);
         return Err(invalid_image_format_error());
     }
     Ok(())
@@ -146,7 +205,26 @@ struct MultipartData {
     image_base64: Option<String>,
 }
 
+impl std::fmt::Debug for MultipartData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultipartData")
+            .field("author_username", &self.author_username)
+            .field("text", &self.text)
+            .field("avatar_url", &self.avatar_url)
+            .field(
+                "image_base64",
+                &self
+                    .image_base64
+                    .as_ref()
+                    .map(|s| format!("{}...", &s[..20])),
+            )
+            .finish()
+    }
+}
+
 async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, AppError> {
+    info!("Parsing multipart form data");
+
     let mut data = MultipartData {
         author_username: String::new(),
         text: String::new(),
@@ -154,36 +232,62 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, AppE
         image_base64: None,
     };
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|_| internal_server_error())?
-    {
-        let name = field.name().ok_or(form_error())?;
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        error!("Failed to fetch next multipart field: {:?}", e);
+        form_error()
+    })? {
+        let name = field.name().ok_or_else(|| {
+            warn!("Multipart field without a name encountered");
+            form_error()
+        })?;
 
         match name {
-            "text" => {
-                data.text = field.text().await.map_err(|_| form_error())?;
-            }
-            "author_username" => {
-                data.author_username = field.text().await.map_err(|_| form_error())?;
-            }
-            "image" => {
-                let bytes = field.bytes().await.map_err(|_| form_error())?;
-                if !bytes.is_empty() {
-                    validate_bytes_as_png(&bytes)?;
-                    data.image_base64 = Some(BASE64_STANDARD.encode(bytes));
-                }
-            }
-            "avatar_url" => {
-                let text = field.text().await.map_err(|_| form_error())?;
-                data.avatar_url = Some(text).filter(|x| !x.is_empty());
-            }
-            _ => continue,
+            "text" => data.text = parse_text_field(field).await?,
+            "author_username" => data.author_username = parse_author_username_field(field).await?,
+            "image" => data.image_base64 = parse_image_field(field).await?,
+            "avatar_url" => data.avatar_url = parse_avatar_url_field(field).await?,
+            _ => warn!("Unexpected field in multipart data: {}", name),
         }
     }
 
+    info!("Completed parsing multipart data: {:?}", data);
     Ok(data)
+}
+
+async fn parse_text_field(field: Field<'_>) -> Result<String, AppError> {
+    field.text().await.map_err(|e| {
+        error!("Failed to read 'text' field: {:?}", e);
+        form_error()
+    })
+}
+
+async fn parse_author_username_field(field: Field<'_>) -> Result<String, AppError> {
+    field.text().await.map_err(|e| {
+        error!("Failed to read 'author_username' field: {:?}", e);
+        form_error()
+    })
+}
+
+async fn parse_image_field(field: Field<'_>) -> Result<Option<String>, AppError> {
+    let bytes = field.bytes().await.map_err(|e| {
+        error!("Failed to read 'image' field: {:?}", e);
+        form_error()
+    })?;
+
+    if !bytes.is_empty() {
+        validate_bytes_as_png(&bytes)?;
+        Ok(Some(BASE64_STANDARD.encode(bytes)))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn parse_avatar_url_field(field: Field<'_>) -> Result<Option<String>, AppError> {
+    let text = field.text().await.map_err(|e| {
+        error!("Failed to read 'avatar_url' field: {:?}", e);
+        form_error()
+    })?;
+    Ok(Some(text).filter(|x| !x.is_empty()))
 }
 
 #[cfg(test)]
