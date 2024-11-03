@@ -23,7 +23,11 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use axum::{body::Body, extract::Request};
+
+    use axum::{
+        body::{to_bytes, Body},
+        extract::Request,
+    };
     use tower::ServiceExt;
 
     use super::*;
@@ -49,5 +53,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), 308);
+    }
+
+    #[tokio::test]
+    async fn home_uri_returns_home_page() {
+        let response = app()
+            .oneshot(Request::builder().uri("/home").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_string = String::from_utf8(bytes.to_vec()).unwrap();
+
+        assert!(body_string.contains("Blogposts"));
+        assert!(body_string.contains("Create"));
+        assert!(body_string.contains("Feed"));
     }
 }
