@@ -1,6 +1,7 @@
 mod backend;
 mod blogpost;
 mod db;
+mod error;
 
 use crate::backend::{fallback, get_home, handle_form_submit};
 use axum::{response::Redirect, routing::get, Router};

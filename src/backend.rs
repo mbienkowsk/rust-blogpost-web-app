@@ -1,5 +1,9 @@
 use crate::blogpost::Blogpost;
 use crate::db;
+use crate::error::{
+    avatar_download_error, form_error, internal_server_error, invalid_avatar_url_error,
+    invalid_image_format_error, AppError,
+};
 use askama::Template;
 use axum::response::Html;
 use axum::{body::Bytes, extract::Multipart};
@@ -15,10 +19,6 @@ pub struct BlogTemplate {
     pub posts: Vec<Blogpost>,
 }
 
-const INTERNAL_SERVER_ERROR: &str = "Internal server error. Try again later.";
-const AVATAR_DOWNLOAD_ERROR: &str = "Failed to download avatar.";
-const FORM_ERROR: &str = "Invalid form data.";
-
 pub async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) {
     (
         axum::http::StatusCode::NOT_FOUND,
@@ -26,35 +26,37 @@ pub async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) 
     )
 }
 
-pub async fn get_home() -> Html<String> {
+pub async fn get_home() -> Result<Html<String>, AppError> {
     match db::get_all_blogposts() {
         Ok(posts) => BlogTemplate { posts }
             .render()
-            .unwrap_or(String::from(INTERNAL_SERVER_ERROR)),
-        Err(_) => String::from(INTERNAL_SERVER_ERROR),
+            .map(Html)
+            .map_err(|_| internal_server_error()),
+        Err(_) => Err(internal_server_error()),
     }
-    .into()
 }
 
-pub async fn handle_form_submit(multipart: axum::extract::Multipart) -> Html<String> {
+pub async fn handle_form_submit(
+    multipart: axum::extract::Multipart,
+) -> Result<Html<String>, AppError> {
     let multipart_data = match parse_multipart(multipart).await {
         Ok(data) => data,
-        Err(e) => return e.into(),
+        Err(e) => return Err(e),
     };
 
     let new_post = match create_blogpost(multipart_data).await {
         Ok(post) => post,
-        Err(e) => return e.into(),
+        Err(e) => return Err(e),
     };
 
     if db::insert_blogpost(new_post).is_err() {
-        return String::from(INTERNAL_SERVER_ERROR).into();
+        return Err(internal_server_error());
     }
 
     get_home().await
 }
 
-async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, String> {
+async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, AppError> {
     let mut new_post = Blogpost::new(
         multipart_data.text,
         multipart_data.author_username,
@@ -63,7 +65,7 @@ async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, Stri
     );
 
     if let Some(url) = multipart_data.avatar_url {
-        let parsed_url = Url::parse(&url).map_err(|_| "Invalid avatar URL")?;
+        let parsed_url = Url::parse(&url).map_err(|_| invalid_avatar_url_error())?;
 
         match download_avatar(parsed_url).await {
             Ok(avatar_base64) => new_post.avatar_base64 = avatar_base64,
@@ -75,65 +77,64 @@ async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, Stri
 }
 
 // Download a png avatar from the given URL and return it as a base64 encoded string
-async fn download_avatar(url: Url) -> Result<Option<String>, String> {
+async fn download_avatar(url: Url) -> Result<Option<String>, AppError> {
     let client = reqwest::ClientBuilder::new()
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|_| INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| internal_server_error())?;
 
     let request = client
         .get(url)
         .header("Accept", "image/png")
         .build()
-        .map_err(|_| INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| internal_server_error())?;
 
     let response = client
         .execute(request)
         .await
-        .map_err(|_| AVATAR_DOWNLOAD_ERROR)?;
+        .map_err(|_| avatar_download_error())?;
 
     handle_avatar_response(response).await
 }
 
-async fn handle_avatar_response(response: reqwest::Response) -> Result<Option<String>, String> {
+async fn handle_avatar_response(response: reqwest::Response) -> Result<Option<String>, AppError> {
     if !response.status().is_success() {
-        return Err(AVATAR_DOWNLOAD_ERROR.to_string());
+        return Err(avatar_download_error());
     }
 
     validate_png_header(response.headers())?;
-    let bytes = response.bytes().await.map_err(|_| AVATAR_DOWNLOAD_ERROR)?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| avatar_download_error())?;
     validate_bytes_as_png(&bytes)?;
     let rv = BASE64_STANDARD.encode(bytes);
     Ok(Some(rv))
 }
 
 // Verify that the bytes downloaded from a given URL are a valid PNG image
-fn validate_bytes_as_png(image_bytes: &Bytes) -> Result<(), String> {
+fn validate_bytes_as_png(image_bytes: &Bytes) -> Result<(), AppError> {
     match image::ImageReader::new(Cursor::new(image_bytes))
         .with_guessed_format()
         // Only cursor IO errors here
-        .map_err(|_| String::from("Error while parsing the image. Try again."))?
+        .map_err(|_| internal_server_error())?
         .format()
     {
         Some(ImageFormat::Png) => Ok(()),
-        Some(_) => Err(String::from("Invalid image format! Accepting only PNG")),
-        None => Err(String::from(
-            "Could not determine image format! Make sure the image is a valid PNG.",
-        )),
+        Some(_) => Err(invalid_image_format_error()),
+        None => Err(invalid_image_format_error()),
     }
 }
 
-fn validate_png_header(headers: &axum::http::HeaderMap) -> Result<(), String> {
+fn validate_png_header(headers: &axum::http::HeaderMap) -> Result<(), AppError> {
     let content_type = headers
         .get("Content-Type")
-        .ok_or("No content type header found")?
+        .ok_or(invalid_image_format_error())?
         .to_str()
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| internal_server_error())?;
 
     if content_type != "image/png" {
-        return Err(String::from(
-            "Invalid content type. Make sure the URL points to a PNG image.",
-        ));
+        return Err(invalid_image_format_error());
     }
     Ok(())
 }
@@ -145,7 +146,7 @@ struct MultipartData {
     image_base64: Option<String>,
 }
 
-async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, String> {
+async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, AppError> {
     let mut data = MultipartData {
         author_username: String::new(),
         text: String::new(),
@@ -156,26 +157,26 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, Stri
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|_| INTERNAL_SERVER_ERROR)?
+        .map_err(|_| internal_server_error())?
     {
-        let name = field.name().ok_or(String::from("Invalid form data"))?;
+        let name = field.name().ok_or(form_error())?;
 
         match name {
             "text" => {
-                data.text = field.text().await.map_err(|_| FORM_ERROR)?;
+                data.text = field.text().await.map_err(|_| form_error())?;
             }
             "author_username" => {
-                data.author_username = field.text().await.map_err(|_| FORM_ERROR)?;
+                data.author_username = field.text().await.map_err(|_| form_error())?;
             }
             "image" => {
-                let bytes = field.bytes().await.map_err(|_| FORM_ERROR)?;
+                let bytes = field.bytes().await.map_err(|_| form_error())?;
                 if !bytes.is_empty() {
                     validate_bytes_as_png(&bytes)?;
                     data.image_base64 = Some(BASE64_STANDARD.encode(bytes));
                 }
             }
             "avatar_url" => {
-                let text = field.text().await.map_err(|_| FORM_ERROR)?;
+                let text = field.text().await.map_err(|_| form_error())?;
                 data.avatar_url = Some(text).filter(|x| !x.is_empty());
             }
             _ => continue,
@@ -255,11 +256,8 @@ mod tests {
         let result_wrong = download_avatar(server_url_wrong).await;
         let result_none = download_avatar(server_url_none).await;
 
-        assert_eq!(
-            result_wrong,
-            Err("Invalid content type. Make sure the URL points to a PNG image.".to_string())
-        );
-        assert_eq!(result_none, Err("No content type header found".to_string()));
+        assert_eq!(result_wrong, Err(invalid_image_format_error()));
+        assert_eq!(result_none, Err(invalid_image_format_error()));
     }
 
     #[tokio::test]
@@ -273,7 +271,7 @@ mod tests {
 
         let server_url = url::Url::parse(&server.url()).unwrap();
         let result = download_avatar(server_url).await;
-        assert_eq!(result, Err(AVATAR_DOWNLOAD_ERROR.to_string()));
+        assert_eq!(result, Err(avatar_download_error()));
     }
 
     #[tokio::test]
@@ -289,13 +287,7 @@ mod tests {
 
         let server_url = url::Url::parse(&server.url()).unwrap();
         let result = download_avatar(server_url).await;
-        assert_eq!(
-            result,
-            Err(
-                "Could not determine image format! Make sure the url points to a png image."
-                    .to_string()
-            )
-        );
+        assert_eq!(result, Err(invalid_image_format_error()));
     }
 
     #[tokio::test]
@@ -311,9 +303,6 @@ mod tests {
 
         let server_url = url::Url::parse(&server.url()).unwrap();
         let result = download_avatar(server_url).await;
-        assert_eq!(
-            result,
-            Err("Invalid image format! Accepting only PNG".to_string())
-        );
+        assert_eq!(result, Err(invalid_image_format_error()));
     }
 }
