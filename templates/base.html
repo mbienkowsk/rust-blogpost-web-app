@@ -52,17 +52,20 @@
       <p class="text-center">No posts yet!</p>
       {% endif %} {% for post in posts %}
       <div class="bg-black rounded mb-4 p-4 w-3/5">
-        <div class="flex flex-row mb-2">
-          {% if let Some(base64_img) = post.avatar_base64 %}
-          <img
-            src="data:image/png;base64,{{ base64_img }}"
-            alt="{{ post.author_username }}'s avatar"
-            style="width: 50px; height: 50px"
-          />
-          {% endif %}
-          <h3 class="text-green-500 overflow-scroll">
-            {{ post.author_username }}
-          </h3>
+        <div class="flex flex-row mb-2 justify-between items-center">
+          <div class="flex flex-row items-center">
+            {% if let Some(base64_img) = post.avatar_base64 %}
+            <img
+              src="data:image/png;base64,{{ base64_img }}"
+              alt="{{ post.author_username }}'s avatar"
+              class="h-12 w-12 mr-2"
+            />
+            {% endif %}
+            <h3 class="text-green-500 overflow-scroll">
+              {{ post.author_username }}
+            </h3>
+          </div>
+          <p class="text-gray-300">{{ post.published.format("%d-%m-%Y") }}</p>
         </div>
 
         <div class="flex flex-row justify-between">
