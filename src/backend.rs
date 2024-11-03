@@ -160,46 +160,6 @@ mod tests {
     use super::*;
     use axum::body::Bytes;
 
-    #[test]
-    fn test_validate_png_header_no_content_type() {
-        let headers = axum::http::HeaderMap::new();
-        let result = super::validate_png_header(&headers);
-        assert_eq!(result, Err(String::from("No content type header found")));
-    }
-
-    #[test]
-    fn test_validate_png_header_invalid_content_type() {
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert("Content-Type", "image/jpeg".parse().unwrap());
-        let result = super::validate_png_header(&headers);
-        assert_eq!(
-            result,
-            Err(String::from(
-                "Invalid content type. Make sure the URL points to a PNG image."
-            ))
-        );
-    }
-
-    #[test]
-    fn test_validate_png_header_png_content_type() {
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert("Content-Type", "image/png".parse().unwrap());
-        let result = super::validate_png_header(&headers);
-        assert_eq!(result, Ok(()));
-    }
-
-    #[test]
-    fn validate_bytes_as_png_invalid_data() {
-        let bytes = axum::body::Bytes::from("not a png".as_bytes());
-        let result = super::validate_bytes_as_png(&bytes);
-        assert_eq!(
-            result,
-            Err(String::from(
-                "Could not determine image format! Make sure the url points to a png image."
-            ))
-        );
-    }
-
     // These are used to test png Byte validation
     // Smallest possible valid PNG image
     const MINIMAL_PNG_DATA: [u8; 45] = [
@@ -224,35 +184,6 @@ mod tests {
         0x52, 0x49, 0x46, 0x46, 0x0A, 0x00, 0x00, 0x00, // RIFF Header
         0x57, 0x45, 0x42, 0x50, // "WEBP" Signature
     ];
-
-    #[test]
-    fn test_validate_bytes_as_png_correct() {
-        let png_as_bytes = Bytes::from_static(&MINIMAL_PNG_DATA);
-        let result = super::validate_bytes_as_png(&png_as_bytes);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_bytes_as_png_webp_image() {
-        let webp_as_bytes = Bytes::from_static(&MINIMAL_WEBP_DATA);
-        let result = super::validate_bytes_as_png(&webp_as_bytes);
-        assert_eq!(
-            result,
-            Err(String::from("Invalid image format! Accepting only PNG"))
-        );
-    }
-
-    #[test]
-    fn test_validate_bytes_as_png_invalid_data() {
-        let invalid_data = Bytes::from("not a png".as_bytes());
-        let result = super::validate_bytes_as_png(&invalid_data);
-        assert_eq!(
-            result,
-            Err(String::from(
-                "Could not determine image format! Make sure the url points to a png image."
-            ))
-        );
-    }
 
     #[tokio::test]
     async fn test_download_avatar_success() {
@@ -334,6 +265,25 @@ mod tests {
                 "Could not determine image format! Make sure the url points to a png image."
                     .to_string()
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_avatar_invalid_image_type_png_header() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("Content-Type", "image/png")
+            .with_body(Bytes::from_static(&MINIMAL_WEBP_DATA))
+            .create_async()
+            .await;
+
+        let server_url = url::Url::parse(&server.url()).unwrap();
+        let result = download_avatar(server_url).await;
+        assert_eq!(
+            result,
+            Err("Invalid image format! Accepting only PNG".to_string())
         );
     }
 }
