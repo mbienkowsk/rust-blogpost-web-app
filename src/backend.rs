@@ -17,6 +17,7 @@ pub struct BlogTemplate {
 
 const INTERNAL_SERVER_ERROR: &str = "Internal server error. Try again later.";
 const AVATAR_DOWNLOAD_ERROR: &str = "Failed to download avatar.";
+const FORM_ERROR: &str = "Invalid form data.";
 
 pub async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) {
     (
@@ -157,28 +158,30 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, Stri
         .await
         .map_err(|_| INTERNAL_SERVER_ERROR)?
     {
-        match field.name().unwrap() {
+        let name = field.name().ok_or(String::from("Invalid form data"))?;
+
+        match name {
             "text" => {
-                data.text = field.text().await.unwrap();
+                data.text = field.text().await.map_err(|_| FORM_ERROR)?;
             }
             "author_username" => {
-                data.author_username = field.text().await.unwrap();
+                data.author_username = field.text().await.map_err(|_| FORM_ERROR)?;
             }
             "image" => {
-                let bytes = field.bytes().await.unwrap();
+                let bytes = field.bytes().await.map_err(|_| FORM_ERROR)?;
                 if !bytes.is_empty() {
                     data.image_base64 = Some(BASE64_STANDARD.encode(bytes));
                 }
             }
             "avatar_url" => {
-                let text = field.text().await.unwrap();
+                let text = field.text().await.map_err(|_| FORM_ERROR)?;
                 data.avatar_url = Some(text).filter(|x| !x.is_empty());
             }
             _ => continue,
         }
     }
 
-    data
+    Ok(data)
 }
 
 #[cfg(test)]
