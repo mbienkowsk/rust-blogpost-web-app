@@ -52,7 +52,9 @@
       <p class="text-center">No posts yet!</p>
       {% endif %} {% for post in posts %}
       <div class="bg-black rounded mb-4 p-4 w-3/5">
-        <div class="flex flex-row mb-2 justify-between items-center">
+        <div
+          class="flex flex-row mb-2 justify-between items-center overflow-scroll"
+        >
           <div class="flex flex-row items-center">
             {% if let Some(base64_img) = post.avatar_base64 %}
             <img
