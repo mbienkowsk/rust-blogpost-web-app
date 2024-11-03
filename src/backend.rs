@@ -15,10 +15,8 @@ pub struct BlogTemplate {
     pub posts: Vec<Blogpost>,
 }
 
-pub fn get_populated_template_value() -> String {
-    let posts = db::get_all_blogposts().unwrap();
-    BlogTemplate { posts }.render().unwrap()
-}
+const INTERNAL_SERVER_ERROR: &str = "Internal server error. Try again later.";
+const AVATAR_DOWNLOAD_ERROR: &str = "Failed to download avatar.";
 
 pub async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) {
     (
@@ -28,12 +26,34 @@ pub async fn fallback(uri: axum::http::Uri) -> (axum::http::StatusCode, String) 
 }
 
 pub async fn get_home() -> Html<String> {
-    get_populated_template_value().into()
+    match db::get_all_blogposts() {
+        Ok(posts) => BlogTemplate { posts }
+            .render()
+            .unwrap_or(String::from(INTERNAL_SERVER_ERROR)),
+        Err(_) => String::from(INTERNAL_SERVER_ERROR),
+    }
+    .into()
 }
 
 pub async fn handle_form_submit(multipart: axum::extract::Multipart) -> Html<String> {
-    let multipart_data = parse_multipart(multipart).await;
+    let multipart_data = match parse_multipart(multipart).await {
+        Ok(data) => data,
+        Err(e) => return e.into(),
+    };
 
+    let new_post = match create_blogpost(multipart_data).await {
+        Ok(post) => post,
+        Err(e) => return e.into(),
+    };
+
+    if db::insert_blogpost(new_post).is_err() {
+        return String::from(INTERNAL_SERVER_ERROR).into();
+    }
+
+    get_home().await
+}
+
+async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, String> {
     let mut new_post = Blogpost::new(
         multipart_data.text,
         multipart_data.author_username,
@@ -41,20 +61,16 @@ pub async fn handle_form_submit(multipart: axum::extract::Multipart) -> Html<Str
         None,
     );
 
-    let avatar_url = multipart_data.avatar_url;
+    if let Some(url) = multipart_data.avatar_url {
+        let parsed_url = Url::parse(&url).map_err(|_| "Invalid avatar URL")?;
 
-    if let Some(url) = avatar_url {
-        let url = Url::parse(&url).unwrap();
-        let download_result = download_avatar(url).await;
-        match download_result {
-            Ok(value) => new_post.avatar_base64 = value,
-            Err(e) => return e.into(),
+        match download_avatar(parsed_url).await {
+            Ok(avatar_base64) => new_post.avatar_base64 = avatar_base64,
+            Err(e) => return Err(e.into()),
         }
     }
 
-    db::insert_blogpost(new_post).unwrap();
-
-    get_populated_template_value().into()
+    Ok(new_post)
 }
 
 // Download a png avatar from the given URL and return it as a base64 encoded string
@@ -62,26 +78,32 @@ async fn download_avatar(url: Url) -> Result<Option<String>, String> {
     let client = reqwest::ClientBuilder::new()
         .timeout(Duration::from_secs(5))
         .build()
-        //TODO: status codes??
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| INTERNAL_SERVER_ERROR)?;
 
     let request = client
         .get(url)
         .header("Accept", "image/png")
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| INTERNAL_SERVER_ERROR)?;
 
-    let response = client.execute(request).await.unwrap();
+    let response = client
+        .execute(request)
+        .await
+        .map_err(|_| AVATAR_DOWNLOAD_ERROR)?;
 
+    handle_avatar_response(response).await
+}
+
+async fn handle_avatar_response(response: reqwest::Response) -> Result<Option<String>, String> {
     if !response.status().is_success() {
-        Err("Failed to download avatar".to_string())
-    } else {
-        validate_png_header(response.headers())?;
-        let bytes = response.bytes().await.unwrap();
-        validate_bytes_as_png(&bytes)?;
-        let rv = BASE64_STANDARD.encode(bytes);
-        Ok(Some(rv))
+        return Err(AVATAR_DOWNLOAD_ERROR.to_string());
     }
+
+    validate_png_header(response.headers())?;
+    let bytes = response.bytes().await.map_err(|_| AVATAR_DOWNLOAD_ERROR)?;
+    validate_bytes_as_png(&bytes)?;
+    let rv = BASE64_STANDARD.encode(bytes);
+    Ok(Some(rv))
 }
 
 // Verify that the bytes downloaded from a given URL are a valid PNG image
@@ -122,7 +144,7 @@ struct MultipartData {
     image_base64: Option<String>,
 }
 
-async fn parse_multipart(mut multipart: Multipart) -> MultipartData {
+async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, String> {
     let mut data = MultipartData {
         author_username: String::new(),
         text: String::new(),
@@ -130,7 +152,11 @@ async fn parse_multipart(mut multipart: Multipart) -> MultipartData {
         image_base64: None,
     };
 
-    while let Some(field) = multipart.next_field().await.unwrap() {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| INTERNAL_SERVER_ERROR)?
+    {
         match field.name().unwrap() {
             "text" => {
                 data.text = field.text().await.unwrap();
@@ -243,7 +269,7 @@ mod tests {
 
         let server_url = url::Url::parse(&server.url()).unwrap();
         let result = download_avatar(server_url).await;
-        assert_eq!(result, Err("Failed to download avatar".to_string()));
+        assert_eq!(result, Err(AVATAR_DOWNLOAD_ERROR.to_string()));
     }
 
     #[tokio::test]
