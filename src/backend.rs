@@ -67,7 +67,7 @@ async fn create_blogpost(multipart_data: MultipartData) -> Result<Blogpost, Stri
 
         match download_avatar(parsed_url).await {
             Ok(avatar_base64) => new_post.avatar_base64 = avatar_base64,
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         }
     }
 
@@ -118,7 +118,7 @@ fn validate_bytes_as_png(image_bytes: &Bytes) -> Result<(), String> {
         Some(ImageFormat::Png) => Ok(()),
         Some(_) => Err(String::from("Invalid image format! Accepting only PNG")),
         None => Err(String::from(
-            "Could not determine image format! Make sure the url points to a png image.",
+            "Could not determine image format! Make sure the image is a valid PNG.",
         )),
     }
 }
@@ -170,6 +170,7 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<MultipartData, Stri
             "image" => {
                 let bytes = field.bytes().await.map_err(|_| FORM_ERROR)?;
                 if !bytes.is_empty() {
+                    validate_bytes_as_png(&bytes)?;
                     data.image_base64 = Some(BASE64_STANDARD.encode(bytes));
                 }
             }
