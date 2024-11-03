@@ -15,7 +15,7 @@ fn app() -> Router {
 
 #[tokio::main]
 async fn main() {
-    env_logger::init(); // TODO: setup logging
+    env_logger::init();
     db::create_db_schema().unwrap();
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

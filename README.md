@@ -1,4 +1,3 @@
-# TODO: DEPS
 
 # Blog web app
 
