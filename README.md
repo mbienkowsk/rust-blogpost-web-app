@@ -1,7 +1,8 @@
 
 # Blog web app
 
-This simple app provides a platform to share blogposts.
+This simple app build using axum and askama provides a platform to share blogposts.
+
 Each blogpost consists of:
 
 * main text
